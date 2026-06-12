@@ -70,3 +70,33 @@ def test_slack_adapter_keeps_slack_identity():
     from gateway.platforms.slack import SlackAdapter
     a = SlackAdapter(_cfg())
     assert a.platform == Platform.SLACK
+
+
+def test_env_enablement_returns_flat_dict(monkeypatch):
+    monkeypatch.setenv("TIME_BOT_TOKEN", "t-bot")
+    monkeypatch.setenv("TIME_API_BASE_URL", "https://time.tbank.ru/api/")
+    monkeypatch.setenv("TIME_HOME_CHANNEL", "C123")
+    from plugins.platforms.time.adapter import _env_enablement
+    seed = _env_enablement()
+    # Flat: api_base_url is a top-level key (so it merges into extra), not nested under "extra"
+    assert seed["api_base_url"] == "https://time.tbank.ru/api/"
+    assert "extra" not in seed
+    assert seed["home_channel"] == {"chat_id": "C123"}
+
+
+def test_env_enablement_none_without_token(monkeypatch):
+    monkeypatch.delenv("TIME_BOT_TOKEN", raising=False)
+    from plugins.platforms.time.adapter import _env_enablement
+    assert _env_enablement() is None
+
+
+def test_validate_config_uses_extra_when_env_absent(monkeypatch):
+    monkeypatch.delenv("TIME_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TIME_API_BASE_URL", raising=False)
+    from plugins.platforms.time.adapter import _validate_config
+    class _Cfg:
+        extra = {"token": "t-bot", "api_base_url": "https://time.tbank.ru/api/"}
+    assert _validate_config(_Cfg()) is True
+    class _Empty:
+        extra = {}
+    assert _validate_config(_Empty()) is False
