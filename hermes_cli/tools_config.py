@@ -1537,17 +1537,52 @@ def _get_platform_tools(
         enabled_toolsets -= disabled_set
 
     # ── Corporate hard-deny: restricted platforms (e.g. Time) can NEVER
-    # receive dangerous toolsets, regardless of config/plugins. This is the
-    # single chokepoint both gateway call sites flow through. Strip both the
-    # toolset NAMES and their expanded individual TOOL names, since
-    # enabled_toolsets holds a mix of both. ──
-    from toolsets import CORP_DANGEROUS_TOOLSETS, resolve_toolset
+    # receive dangerous tools, directly OR via a composite toolset that
+    # bundles them. enabled_toolsets holds a MIX of toolset names and
+    # individual tool names; later get_tool_definitions expands the toolset
+    # names. So we must drop: (a) dangerous toolset names, (b) individual
+    # dangerous tool names, and (c) ANY toolset whose expansion contains a
+    # dangerous tool (e.g. the composite "coding"). Dropping a composite
+    # whole is fail-safe — a corp platform should be configured with
+    # corp_safe, not coding; we'd rather lose coding's safe tools than leak
+    # its dangerous ones.
+    #
+    # We compute ``dangerous_tools`` as the set of individual tool names that
+    # appear in CORP_DANGEROUS_TOOLSETS expansions but NOT in any
+    # non-dangerous configurable toolset. This avoids false positives: the
+    # ``browser`` toolset bundles ``web_search``, but since ``web_search``
+    # also lives in the safe ``web`` toolset, it is excluded from
+    # ``dangerous_tools`` — so the ``web`` toolset is never wrongly stripped.
+    # ──
+    from toolsets import CORP_DANGEROUS_TOOLSETS, resolve_toolset, TOOLSETS
     CORP_RESTRICTED_PLATFORMS = {"time"}
     if platform in CORP_RESTRICTED_PLATFORMS:
-        dangerous_names = set(CORP_DANGEROUS_TOOLSETS)
+        _all_dangerous_expanded: Set[str] = set()
         for ts in CORP_DANGEROUS_TOOLSETS:
-            dangerous_names |= set(resolve_toolset(ts))
-        enabled_toolsets = {t for t in enabled_toolsets if t not in dangerous_names}
+            _all_dangerous_expanded |= set(resolve_toolset(ts))
+        # Build the set of tools that appear in at least one safe (non-dangerous)
+        # configurable toolset. Any tool present in a safe toolset should not
+        # be treated as unconditionally dangerous when evaluating composites.
+        _safe_configurable_toolsets = {
+            ts_key for ts_key, _, _ in CONFIGURABLE_TOOLSETS
+            if ts_key not in CORP_DANGEROUS_TOOLSETS
+        }
+        _safe_individual_tools: Set[str] = set()
+        for _safe_ts in _safe_configurable_toolsets:
+            _safe_individual_tools |= set(resolve_toolset(_safe_ts))
+        dangerous_tools = _all_dangerous_expanded - _safe_individual_tools
+
+        def _is_corp_safe(name: str) -> bool:
+            if name in CORP_DANGEROUS_TOOLSETS:
+                return False
+            if name in dangerous_tools:  # individual dangerous tool name
+                return False
+            if name in TOOLSETS:  # composite/basic toolset: check its expansion
+                if set(resolve_toolset(name)) & dangerous_tools:
+                    return False
+            return True
+
+        enabled_toolsets = {t for t in enabled_toolsets if _is_corp_safe(t)}
 
     return enabled_toolsets
 
