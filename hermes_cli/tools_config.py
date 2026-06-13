@@ -1536,6 +1536,19 @@ def _get_platform_tools(
         disabled_set = {str(ts) for ts in disabled_toolsets}
         enabled_toolsets -= disabled_set
 
+    # ── Corporate hard-deny: restricted platforms (e.g. Time) can NEVER
+    # receive dangerous toolsets, regardless of config/plugins. This is the
+    # single chokepoint both gateway call sites flow through. Strip both the
+    # toolset NAMES and their expanded individual TOOL names, since
+    # enabled_toolsets holds a mix of both. ──
+    from toolsets import CORP_DANGEROUS_TOOLSETS, resolve_toolset
+    CORP_RESTRICTED_PLATFORMS = {"time"}
+    if platform in CORP_RESTRICTED_PLATFORMS:
+        dangerous_names = set(CORP_DANGEROUS_TOOLSETS)
+        for ts in CORP_DANGEROUS_TOOLSETS:
+            dangerous_names |= set(resolve_toolset(ts))
+        enabled_toolsets = {t for t in enabled_toolsets if t not in dangerous_names}
+
     return enabled_toolsets
 
 
